@@ -96,8 +96,25 @@ func (s *Store) Commit(ctx context.Context, req application.CommitRequest, mutat
 	if s.file == nil {
 		return application.CommitResult{}, errors.New("账本已关闭")
 	}
+	command, err := json.Marshal(req.CommandPayload)
+	if err != nil {
+		return application.CommitResult{}, fmt.Errorf("编码命令载荷: %w", err)
+	}
+	currentHash, err := payloadHash(command)
+	if err != nil {
+		return application.CommitResult{}, err
+	}
 	if prior, ok := s.idempotency[req.IdempotencyKey]; ok {
-		return application.CommitResult{Response: append(json.RawMessage(nil), prior.Response...), Version: prior.Version, Replayed: true}, nil
+		sameCase := prior.CaseID == req.CaseID
+		// CreateCase 在服务层生成档案 ID，因此同一 Idempotency-Key 的合法重放
+		// 会携带不同的请求 CaseID；此时以事件类型与归一化载荷作为档案身份。
+		if req.EventType == "case.created" {
+			sameCase = true
+		}
+		if sameCase && prior.EventType == req.EventType && prior.PayloadHash == currentHash {
+			return application.CommitResult{Response: append(json.RawMessage(nil), prior.Response...), Version: prior.Version, Replayed: true}, nil
+		}
+		return application.CommitResult{}, &application.AppError{Kind: application.KindConflict, Code: "idempotency_conflict", Message: fmt.Sprintf("Idempotency-Key 已用于不同的请求: case=%s eventType=%s", prior.CaseID, prior.EventType)}
 	}
 	current := s.cases[req.CaseID]
 	if current == nil && req.EventType != "case.created" {
@@ -126,10 +143,6 @@ func (s *Store) Commit(ctx context.Context, req application.CommitRequest, mutat
 	if err != nil {
 		return application.CommitResult{}, fmt.Errorf("编码命令响应: %w", err)
 	}
-	command, err := json.Marshal(req.CommandPayload)
-	if err != nil {
-		return application.CommitResult{}, fmt.Errorf("编码命令载荷: %w", err)
-	}
 	nextCopy, err := clone(next)
 	if err != nil {
 		return application.CommitResult{}, err
@@ -151,7 +164,7 @@ func (s *Store) Commit(ctx context.Context, req application.CommitRequest, mutat
 		return application.CommitResult{}, fmt.Errorf("同步事件账本: %w", err)
 	}
 	s.cases[req.CaseID] = nextCopy
-	stored := storedIdempotency{CaseID: req.CaseID, EventType: req.EventType, Response: response, Version: nextCopy.Version}
+	stored := storedIdempotency{CaseID: req.CaseID, EventType: req.EventType, PayloadHash: currentHash, Response: response, Version: nextCopy.Version}
 	s.idempotency[req.IdempotencyKey] = stored
 	s.events = append(s.events, rec)
 	s.lastSequence = rec.Sequence

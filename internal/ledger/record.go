@@ -1,13 +1,44 @@
 package ledger
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"surveyrelease/internal/domain"
 )
+
+// normalizePayload 将命令载荷的原始 JSON 归一化为稳定的字节表示。
+// 通过解码为通用值再重新编码，使 map 键按字典序排列、空白保持一致，
+// 从而确保语义相同的载荷在不同提交间产生相同的归一化字节序列。
+func normalizePayload(raw json.RawMessage) ([]byte, error) {
+	if len(raw) == 0 {
+		return []byte("null"), nil
+	}
+	var value any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if err := dec.Decode(&value); err != nil {
+		return nil, fmt.Errorf("解码命令载荷: %w", err)
+	}
+	out, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("编码归一化载荷: %w", err)
+	}
+	return out, nil
+}
+
+// payloadHash 返回归一化命令载荷的稳定摘要，用于幂等冲突判断。
+func payloadHash(raw json.RawMessage) (string, error) {
+	normalized, err := normalizePayload(raw)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(normalized)
+	return hex.EncodeToString(sum[:]), nil
+}
 
 const schemaVersion = 1
 
@@ -55,10 +86,11 @@ func calculateEventHash(r eventRecord) (string, error) {
 }
 
 type storedIdempotency struct {
-	CaseID    string          `json:"caseId"`
-	EventType string          `json:"eventType"`
-	Response  json.RawMessage `json:"response"`
-	Version   int64           `json:"version"`
+	CaseID      string          `json:"caseId"`
+	EventType   string          `json:"eventType"`
+	PayloadHash string          `json:"payloadHash"`
+	Response    json.RawMessage `json:"response"`
+	Version     int64           `json:"version"`
 }
 
 type projectionSnapshot struct {

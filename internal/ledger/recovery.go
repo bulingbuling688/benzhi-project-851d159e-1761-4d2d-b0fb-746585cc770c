@@ -103,7 +103,11 @@ func replay(records []eventRecord) (map[string]*domain.ReleaseCase, map[string]s
 	var hash string
 	for _, rec := range records {
 		cases[rec.CaseID] = rec.Aggregate
-		idem[rec.IdempotencyKey] = storedIdempotency{CaseID: rec.CaseID, EventType: rec.EventType, Response: rec.Response, Version: rec.Aggregate.Version}
+		pHash, err := payloadHash(rec.CommandPayload)
+		if err != nil {
+			pHash = ""
+		}
+		idem[rec.IdempotencyKey] = storedIdempotency{CaseID: rec.CaseID, EventType: rec.EventType, PayloadHash: pHash, Response: rec.Response, Version: rec.Aggregate.Version}
 		seq = rec.Sequence
 		hash = rec.EventHash
 	}
