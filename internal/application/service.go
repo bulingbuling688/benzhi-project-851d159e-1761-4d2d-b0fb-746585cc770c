@@ -362,7 +362,11 @@ func (s *Service) Timeline(ctx context.Context, caseID string, query TimelineQue
 		return TimelinePage{}, normalizeError(err)
 	}
 	if page.ReturnedCount == 0 {
-		if c, _ := s.repo.Get(ctx, caseID); c == nil {
+		c, err := s.repo.Get(ctx, caseID)
+		if err != nil {
+			return TimelinePage{}, normalizeError(err)
+		}
+		if c == nil {
 			return TimelinePage{}, fail(KindNotFound, "case_not_found", "档案不存在")
 		}
 	}
