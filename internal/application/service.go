@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -74,10 +75,12 @@ func normalizeError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if _, ok := err.(*AppError); ok {
-		return err
+	var app *AppError
+	if errors.As(err, &app) {
+		return app
 	}
-	if d, ok := err.(*domain.RuleError); ok {
+	var d *domain.RuleError
+	if errors.As(err, &d) {
 		kind := KindValidation
 		if d.Code == "invalid_state" || d.Code == "open_blocker" || d.Code == "calibration_evidence_expired" || d.Code == "review_not_ready" {
 			kind = KindState
